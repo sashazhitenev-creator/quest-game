@@ -162,6 +162,11 @@
 <div id="menu">
   <div id="logo">КВЕСТ</div>
   <p class="sub">Текстовое приключение. Мир генерируется нейросетью на ходу.<br>Пиши любые действия — игра решит, чем это кончится.</p>
+  <div id="continue-box" style="display:none; width:100%; max-width:380px; margin-bottom:16px;">
+    <button class="genre-btn" id="continue-btn" style="width:100%; border-color: var(--green); color: var(--green);">
+      <b>▶ ПРОДОЛЖИТЬ</b><small id="continue-info"></small>
+    </button>
+  </div>
   <p style="font-size:13px; letter-spacing:1px;">» ТИП ИГРЫ «</p>
   <div class="modes" style="margin-bottom:2px;">
     <button class="mode-btn active" id="type-story">СЮЖЕТ</button>
@@ -239,6 +244,79 @@ GENRES.forEach((g) => {
   $("genres").appendChild(b);
 });
 
+// ─── Сохранение мира ───
+const SAVE_KEY = "quest_save_v1";
+let lastLoc = "";
+
+function saveGame() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      history, hp, turn, mode, gameType, loc: lastLoc, ts: Date.now(),
+    }));
+  } catch (e) { /* нет места или приватный режим — играем без сохранений */ }
+}
+
+function loadSave() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!Array.isArray(s.history) || s.history.length < 2) return null;
+    return s;
+  } catch (e) { return null; }
+}
+
+function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+}
+
+function showContinueIfSaved() {
+  const s = loadSave();
+  if (s) {
+    $("continue-box").style.display = "block";
+    $("continue-info").textContent = (s.loc ? s.loc + " · " : "") + "HP " + s.hp + " · ход " + s.turn;
+  } else {
+    $("continue-box").style.display = "none";
+  }
+}
+
+function continueGame() {
+  const s = loadSave();
+  if (!s) return;
+  history = s.history;
+  hp = s.hp;
+  turn = s.turn;
+  mode = s.mode || "detailed";
+  gameType = s.gameType || "story";
+  lastLoc = s.loc || "";
+  gameOver = false;
+  setMode(mode);
+  setType(gameType);
+
+  menu.style.display = "none";
+  game.style.display = "flex";
+  inputbar.style.display = "flex";
+  endscreen.style.display = "none";
+  document.querySelectorAll("#log .entry").forEach((e) => e.remove());
+
+  // восстанавливаем лог из истории (первое сообщение — служебный старт, пропускаем)
+  for (let i = 1; i < history.length; i++) {
+    const m = history[i];
+    if (m.role === "user") {
+      addEntry("player", m.content, true);
+    } else {
+      const p = parseGM(m.content);
+      addEntry("gm", p.narrative || m.content, true);
+    }
+  }
+  updateStatus(lastLoc);
+  setLoading(false);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+$("continue-btn").onclick = continueGame;
+showContinueIfSaved();
+
 // переключатель режима
 function setMode(m) {
   mode = m;
@@ -267,13 +345,13 @@ setInterval(() => {
 let skipTyping = false;
 const TYPE_SPEED = 18; // мс на символ
 
-function addEntry(role, text) {
+function addEntry(role, text, instant) {
   const div = document.createElement("div");
   div.className = "entry " + role;
   logEl.insertBefore(div, thinking);
 
-  // текст игрока и системные — мгновенно
-  if (role !== "gm") {
+  // текст игрока, системные и восстановление из сохранения — мгновенно
+  if (role !== "gm" || instant) {
     div.textContent = (role === "player" ? "> " : "") + text;
     logEl.scrollTop = logEl.scrollHeight;
     return Promise.resolve();
@@ -386,7 +464,8 @@ async function startGame(genre) {
     const p = parseGM(raw);
     thinking.style.display = "none";
     await addEntry("gm", p.narrative || raw);
-    if (p.status) { hp = p.status.hp; updateStatus(p.status.loc); }
+    if (p.status) { hp = p.status.hp; lastLoc = p.status.loc; updateStatus(p.status.loc); }
+    saveGame();
   } catch (e) {
     addEntry("sys", "ОШИБКА СВЯЗИ С МИРОМ: " + e.message);
   }
@@ -413,8 +492,12 @@ async function sendAction() {
       finishGame(p.final);
     } else if (p.status) {
       hp = p.status.hp;
+      lastLoc = p.status.loc;
       updateStatus(p.status.loc);
       if (hp <= 0) finishGame({ type: "DEATH", text: "Твоё здоровье иссякло." });
+      else saveGame();
+    } else {
+      saveGame();
     }
   } catch (e) {
     addEntry("sys", "ОШИБКА СВЯЗИ С МИРОМ: " + e.message);
@@ -424,6 +507,7 @@ async function sendAction() {
 
 function finishGame(final) {
   gameOver = true;
+  clearSave();
   if (final.type === "DEATH") { hp = 0; updateStatus(""); }
   inputbar.style.display = "none";
   endscreen.className = final.type === "VICTORY" ? "victory" : "death";
@@ -438,6 +522,7 @@ $("restart").onclick = () => {
   game.style.display = "none";
   menu.style.display = "flex";
   statusbar.innerHTML = "";
+  showContinueIfSaved();
 };
 
 sendBtn.onclick = sendAction;
