@@ -13,7 +13,11 @@
     --green: #7dff9a;
     --red: #ff6b6b;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--dim) var(--bg); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--dim); border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--amber); }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg);
@@ -46,7 +50,7 @@
   #logo { font-size: 34px; letter-spacing: 10px; font-weight: bold; margin-bottom: 6px; text-shadow: 0 0 12px rgba(255,179,71,.4); }
   .sub { color: var(--dim); max-width: 420px; font-size: 14px; line-height: 1.6; }
   #genres { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 380px; margin-top: 12px; }
-  #modes { display: flex; gap: 8px; width: 100%; max-width: 380px; margin-top: 4px; }
+  .modes { display: flex; gap: 8px; width: 100%; max-width: 380px; margin-top: 4px; }
   .mode-btn {
     flex: 1;
     background: transparent;
@@ -158,8 +162,14 @@
 <div id="menu">
   <div id="logo">КВЕСТ</div>
   <p class="sub">Текстовое приключение. Мир генерируется нейросетью на ходу.<br>Пиши любые действия — игра решит, чем это кончится.</p>
-  <p style="font-size:13px; letter-spacing:1px;">» РЕЖИМ ПОВЕСТВОВАНИЯ «</p>
-  <div id="modes">
+  <p style="font-size:13px; letter-spacing:1px;">» ТИП ИГРЫ «</p>
+  <div class="modes" style="margin-bottom:2px;">
+    <button class="mode-btn active" id="type-story">СЮЖЕТ</button>
+    <button class="mode-btn" id="type-endless">БЕСКОНЕЧНЫЙ</button>
+  </div>
+  <div class="mode-hint" id="type-hint">скрытая цель, кульминация и финал</div>
+  <p style="font-size:13px; letter-spacing:1px; margin-top:20px;">» РЕЖИМ ПОВЕСТВОВАНИЯ «</p>
+  <div class="modes">
     <button class="mode-btn active" id="mode-detailed">ПОДРОБНЫЙ</button>
     <button class="mode-btn" id="mode-simple">ПРОСТОЙ</button>
   </div>
@@ -202,10 +212,16 @@ let turn = 0;
 let loading = false;
 let gameOver = false;
 let mode = "detailed";
+let gameType = "story";
 
 const MODE_HINTS = {
   detailed: "атмосферные описания, детали мира",
   simple: "коротко и по делу: действие — результат",
+};
+
+const TYPE_HINTS = {
+  story: "скрытая цель, кульминация и финал",
+  endless: "открытый мир без финала — исследуй и живи (но умереть можно)",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -232,6 +248,16 @@ function setMode(m) {
 }
 $("mode-detailed").onclick = () => setMode("detailed");
 $("mode-simple").onclick = () => setMode("simple");
+
+// переключатель типа игры
+function setType(t) {
+  gameType = t;
+  $("type-story").classList.toggle("active", t === "story");
+  $("type-endless").classList.toggle("active", t === "endless");
+  $("type-hint").textContent = TYPE_HINTS[t];
+}
+$("type-story").onclick = () => setType("story");
+$("type-endless").onclick = () => setType("endless");
 
 // анимация точек
 setInterval(() => {
@@ -325,7 +351,7 @@ async function callGM() {
   const resp = await fetch(API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: history, mode: mode }),
+    body: JSON.stringify({ messages: history, mode: mode, gameType: gameType }),
   });
   const data = await resp.json();
   if (!resp.ok || data.error) throw new Error(data.error || "код " + resp.status);
