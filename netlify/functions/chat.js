@@ -20,7 +20,13 @@ FINAL: DEATH | <итог одним предложением>
 - Предметы работают только при выполнении условий: свечу нельзя зажечь без огня, дверь не открыть без ключа, из лука не выстрелить без стрел. Если условия нет — действие проваливается, и игроку придётся искать решение.
 - Рискованные действия (идти в темноте, прыгать с высоты, лезть в драку, трогать неизвестное) регулярно приводят к урону HP или осложнениям.
 - Не давай игроку побеждать легко: на пути к любой цели минимум 2-3 серьёзных препятствия — ловушки, враги, тупики, нехватка ресурсов. Найденные предметы не решают всё: карта может быть неполной или устаревшей, верёвка — короткой, оружие — ломаться.
-- Следи за инвентарём по контексту диалога: игрок может использовать только то, что реально нашёл или имел. Если игрок заявляет предмет из ниоткуда ("достаю базуку") — этого предмета у него нет.`;
+- Следи за инвентарём по контексту диалога: игрок может использовать только то, что реально нашёл или имел. Если игрок заявляет предмет из ниоткуда ("достаю базуку") — этого предмета у него нет.
+
+ЛЕЧЕНИЕ:
+- Игрок может восстанавливать HP, но только осмысленными способами: перевязать рану найденной тканью, поесть, поспать в безопасном месте, выпить зелье, обработать рану у лекаря и т.п.
+- Лечение всегда имеет цену или условие: нужны предметы (бинты, еда, травы), время (сон — а мир за это время меняется, и спать в опасном месте рискованно) или деньги (лекарь). Слабое лечение +5..15 HP, хорошее +20..40 HP, максимум 100.
+- Нельзя лечиться бесконечно одним и тем же: рана перевязана — повторная перевязка не даёт HP; еда утоляет голод один раз; одно зелье — один эффект.
+- Тяжёлые состояния (яд, перелом, глубокая рана) не лечатся отдыхом — нужно найти противоядие, лекаря или особое средство, иначе HP продолжает понемногу падать.`;
 
 // Типы игры
 const GAME_TYPES = {
@@ -39,7 +45,8 @@ const STYLES = {
 };
 
 const MODEL = "llama-3.3-70b-versatile";
-const MAX_HISTORY = 40; // защита от раздувания контекста
+const FALLBACK_MODEL = "llama-3.1-8b-instant"; // отдельный дневной лимит — включается при 429
+const MAX_HISTORY = 20; // защита от раздувания контекста (≈10 последних ходов)
 const MAX_ACTION_LEN = 500; // защита от гигантских сообщений
 
 exports.handler = async function (event) {
@@ -78,21 +85,32 @@ exports.handler = async function (event) {
   const systemPrompt = SYSTEM_PROMPT + "\n\n" + GAME_TYPES[gameType] + "\n\n" + STYLES[mode];
 
   try {
-    const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + apiKey,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 600,
-        temperature: 0.9,
-        messages: [{ role: "system", content: systemPrompt }, ...messages],
-      }),
-    });
+    async function askGroq(model) {
+      const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + apiKey,
+        },
+        body: JSON.stringify({
+          model: model,
+          max_tokens: 500,
+          temperature: 0.8,
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+        }),
+      });
+      const data = await resp.json();
+      return { resp: resp, data: data };
+    }
 
-    const data = await resp.json();
+    // Основная модель; при исчерпании лимита (429) — запасная (у неё свой отдельный лимит)
+    let result = await askGroq(MODEL);
+    if (result.resp.status === 429) {
+      result = await askGroq(FALLBACK_MODEL);
+    }
+
+    const resp = result.resp;
+    const data = result.data;
 
     if (!resp.ok) {
       const msg = data && data.error && data.error.message ? data.error.message : "Groq вернул ошибку " + resp.status;
