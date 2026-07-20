@@ -46,6 +46,24 @@
   #logo { font-size: 34px; letter-spacing: 10px; font-weight: bold; margin-bottom: 6px; text-shadow: 0 0 12px rgba(255,179,71,.4); }
   .sub { color: var(--dim); max-width: 420px; font-size: 14px; line-height: 1.6; }
   #genres { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 380px; margin-top: 12px; }
+  #modes { display: flex; gap: 8px; width: 100%; max-width: 380px; margin-top: 4px; }
+  .mode-btn {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--dim);
+    color: var(--dim);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 10px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .mode-btn.active {
+    border-color: var(--green);
+    color: var(--green);
+    background: rgba(125,255,154,.07);
+  }
+  .mode-hint { color: var(--dim); font-size: 12px; margin-top: 6px; }
   .genre-btn {
     background: transparent;
     border: 1px solid var(--dim);
@@ -140,7 +158,13 @@
 <div id="menu">
   <div id="logo">КВЕСТ</div>
   <p class="sub">Текстовое приключение. Мир генерируется нейросетью на ходу.<br>Пиши любые действия — игра решит, чем это кончится.</p>
-  <p style="font-size:13px; letter-spacing:1px;">» ВЫБЕРИ МИР «</p>
+  <p style="font-size:13px; letter-spacing:1px;">» РЕЖИМ ПОВЕСТВОВАНИЯ «</p>
+  <div id="modes">
+    <button class="mode-btn active" id="mode-detailed">ПОДРОБНЫЙ</button>
+    <button class="mode-btn" id="mode-simple">ПРОСТОЙ</button>
+  </div>
+  <div class="mode-hint" id="mode-hint">атмосферные описания, детали мира</div>
+  <p style="font-size:13px; letter-spacing:1px; margin-top:20px;">» ВЫБЕРИ МИР «</p>
   <div id="genres"></div>
 </div>
 
@@ -177,6 +201,12 @@ let hp = 100;
 let turn = 0;
 let loading = false;
 let gameOver = false;
+let mode = "detailed";
+
+const MODE_HINTS = {
+  detailed: "атмосферные описания, детали мира",
+  simple: "коротко и по делу: действие — результат",
+};
 
 const $ = (id) => document.getElementById(id);
 const menu = $("menu"), game = $("game"), logEl = $("log"),
@@ -193,18 +223,63 @@ GENRES.forEach((g) => {
   $("genres").appendChild(b);
 });
 
+// переключатель режима
+function setMode(m) {
+  mode = m;
+  $("mode-detailed").classList.toggle("active", m === "detailed");
+  $("mode-simple").classList.toggle("active", m === "simple");
+  $("mode-hint").textContent = MODE_HINTS[m];
+}
+$("mode-detailed").onclick = () => setMode("detailed");
+$("mode-simple").onclick = () => setMode("simple");
+
 // анимация точек
 setInterval(() => {
   dots.textContent = ".".repeat((dots.textContent.length % 3) + 1);
 }, 400);
 
+let skipTyping = false;
+const TYPE_SPEED = 18; // мс на символ
+
 function addEntry(role, text) {
   const div = document.createElement("div");
   div.className = "entry " + role;
-  div.textContent = (role === "player" ? "> " : "") + text;
   logEl.insertBefore(div, thinking);
-  logEl.scrollTop = logEl.scrollHeight;
+
+  // текст игрока и системные — мгновенно
+  if (role !== "gm") {
+    div.textContent = (role === "player" ? "> " : "") + text;
+    logEl.scrollTop = logEl.scrollHeight;
+    return Promise.resolve();
+  }
+
+  // текст гейм-мастера — печатается по буквам
+  skipTyping = false;
+  return new Promise((resolve) => {
+    let i = 0;
+    function tick() {
+      if (skipTyping) {
+        div.textContent = text;
+        logEl.scrollTop = logEl.scrollHeight;
+        resolve();
+        return;
+      }
+      i += 1;
+      div.textContent = text.slice(0, i) + "▌";
+      logEl.scrollTop = logEl.scrollHeight;
+      if (i < text.length) {
+        setTimeout(tick, TYPE_SPEED);
+      } else {
+        div.textContent = text;
+        resolve();
+      }
+    }
+    tick();
+  });
 }
+
+// клик по логу — мгновенно допечатать
+logEl.addEventListener("click", () => { skipTyping = true; });
 
 function setLoading(v) {
   loading = v;
@@ -250,7 +325,7 @@ async function callGM() {
   const resp = await fetch(API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: history }),
+    body: JSON.stringify({ messages: history, mode: mode }),
   });
   const data = await resp.json();
   if (!resp.ok || data.error) throw new Error(data.error || "код " + resp.status);
@@ -283,7 +358,8 @@ async function startGame(genre) {
     const raw = await callGM();
     history.push({ role: "assistant", content: raw });
     const p = parseGM(raw);
-    addEntry("gm", p.narrative || raw);
+    thinking.style.display = "none";
+    await addEntry("gm", p.narrative || raw);
     if (p.status) { hp = p.status.hp; updateStatus(p.status.loc); }
   } catch (e) {
     addEntry("sys", "ОШИБКА СВЯЗИ С МИРОМ: " + e.message);
@@ -304,7 +380,8 @@ async function sendAction() {
     const raw = await callGM();
     history.push({ role: "assistant", content: raw });
     const p = parseGM(raw);
-    addEntry("gm", p.narrative || raw);
+    thinking.style.display = "none";
+    await addEntry("gm", p.narrative || raw);
 
     if (p.final) {
       finishGame(p.final);
