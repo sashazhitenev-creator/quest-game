@@ -50,20 +50,30 @@ const MAX_HISTORY = 20; // защита от раздувания контекс
 const MAX_ACTION_LEN = 500; // защита от гигантских сообщений
 
 exports.handler = async function (event) {
+  // CORS: игра на Яндекс Играх/VK живёт на чужом домене и обращается к этой функции
+  const CORS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 204, headers: CORS, body: "" };
+  }
   if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: JSON.stringify({ error: "Only POST" }) };
+    return { statusCode: 405, headers: CORS, body: JSON.stringify({ error: "Only POST" }) };
   }
 
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    return { statusCode: 500, body: JSON.stringify({ error: "GROQ_API_KEY не задан на сервере" }) };
+    return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "GROQ_API_KEY не задан на сервере" }) };
   }
 
   let body;
   try {
     body = JSON.parse(event.body || "{}");
   } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: "Некорректный JSON" }) };
+    return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Некорректный JSON" }) };
   }
 
   let messages = Array.isArray(body.messages) ? body.messages : [];
@@ -75,7 +85,7 @@ exports.handler = async function (event) {
     .map((m) => ({ role: m.role, content: m.content.slice(0, m.role === "user" ? MAX_ACTION_LEN : 4000) }));
 
   if (messages.length === 0) {
-    return { statusCode: 400, body: JSON.stringify({ error: "Пустая история" }) };
+    return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Пустая история" }) };
   }
 
   // Режим повествования: detailed (по умолчанию) или simple
@@ -114,7 +124,7 @@ exports.handler = async function (event) {
 
     if (!resp.ok) {
       const msg = data && data.error && data.error.message ? data.error.message : "Groq вернул ошибку " + resp.status;
-      return { statusCode: 502, body: JSON.stringify({ error: msg }) };
+      return { statusCode: 502, headers: CORS, body: JSON.stringify({ error: msg }) };
     }
 
     const text =
@@ -124,10 +134,10 @@ exports.handler = async function (event) {
 
     return {
       statusCode: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: Object.assign({ "Content-Type": "application/json" }, CORS),
       body: JSON.stringify({ text: text }),
     };
   } catch (e) {
-    return { statusCode: 502, body: JSON.stringify({ error: "Сбой запроса к Groq: " + e.message }) };
+    return { statusCode: 502, headers: CORS, body: JSON.stringify({ error: "Сбой запроса к Groq: " + e.message }) };
   }
 };
